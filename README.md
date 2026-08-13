@@ -38,11 +38,13 @@
   - Auto-discovers Python scripts in `.mu/plugins/` with `@hook` decorators for `pre_tool_call`, `post_tool_call`, `on_turn_start`, `on_turn_end`, and `on_context_compact`.
 - **🧠 Multi-Tier Context Compaction**:
   - Automated 2-tier context budget management: output truncation at 70% budget, followed by LLM-driven semantic summarization pass at 90% capacity.
+- **🛡️ Permission Guardrails & YOLO Mode (`--yolo`, `/permission`)**:
+  - Flexible tool permissions (`yolo`, `ask`, `read_only`) with interactive Textual TUI modal approvals and smart safety nets for ultra-destructive commands (`rm -rf`, `sudo`).
 - **📑 Session Persistence & Resuming (`.mu/sessions/`)**:
   - All turns and tool outputs are saved as JSONL records in `.mu/sessions/`.
   - Resume any past session via `--session <session_id>`.
 - **💡 Rich Slash Commands**:
-  - `/stats`, `/clear`, `/session`, `/tools`, `/skills`, `/skill <name>`, `/model [name]`, `/compact`, `/system`, `/export`, `/help`.
+  - `/stats`, `/clear`, `/permission`, `/session`, `/tools`, `/skills`, `/skill <name>`, `/model [name]`, `/compact`, `/system`, `/export`, `/help`.
 - **📦 Zero-Dependency Single Binary**:
   - Includes a PyInstaller script to compile `mu-agent` into a standalone, portable binary executable (`dist/mu`).
 

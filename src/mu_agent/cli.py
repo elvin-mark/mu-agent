@@ -1,21 +1,61 @@
 import asyncio
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container
-from textual.widgets import Footer, Header, Input, RichLog, Static
+from textual.containers import Container, Horizontal
+from textual.screen import ModalScreen
+from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Static
 
 try:
     from .agent import Agent
     from .llm import get_provider
+    from .permissions import PermissionManager, PermissionMode
     from .session import SessionManager
     from .types import Role
 except ImportError:
     from mu_agent.agent import Agent
     from mu_agent.llm import get_provider
+    from mu_agent.permissions import PermissionManager, PermissionMode
     from mu_agent.session import SessionManager
     from mu_agent.types import Role
+
+
+class ToolConfirmationModal(ModalScreen[tuple[bool, bool]]):
+    """Modal dialog for interactive tool approval."""
+
+    def __init__(self, tool_name: str, args: dict[str, Any]):
+        super().__init__()
+        self.tool_name = tool_name
+        self.args = args
+
+    def compose(self) -> ComposeResult:
+        arg_str = str(self.args)
+        if len(arg_str) > 400:
+            arg_str = arg_str[:400] + "..."
+        yield Container(
+            Label(
+                "[bold yellow]⚠️  Tool Confirmation Requested[/bold yellow]",
+                id="modal-title",
+            ),
+            Label(f"Tool: [bold cyan]{self.tool_name}[/bold cyan]"),
+            Label(f"Arguments:\n[dim]{arg_str}[/dim]"),
+            Horizontal(
+                Button("Approve [Y]", id="btn-approve", variant="success"),
+                Button("Reject [N]", id="btn-reject", variant="error"),
+                Button("Always Approve [A]", id="btn-approve-all", variant="primary"),
+                id="modal-buttons",
+            ),
+            id="modal-dialog",
+        )
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-approve":
+            self.dismiss((True, False))
+        elif event.button.id == "btn-reject":
+            self.dismiss((False, False))
+        elif event.button.id == "btn-approve-all":
+            self.dismiss((True, True))
 
 
 class PiApp(App):
@@ -44,6 +84,22 @@ class PiApp(App):
     Input {
         width: 100%;
     }
+    #modal-dialog {
+        padding: 1 2;
+        background: $panel;
+        border: thick $accent;
+        width: 70%;
+        height: auto;
+        align: center middle;
+    }
+    #modal-buttons {
+        margin-top: 1;
+        height: auto;
+        align: center middle;
+    }
+    #modal-buttons Button {
+        margin: 0 1;
+    }
     """
 
     BINDINGS: ClassVar[list[Binding]] = [
@@ -57,21 +113,47 @@ class PiApp(App):
         model: str = "gpt-4o",
         base_url: str | None = None,
         session_id: str | None = None,
+        permission_mode: str = "ask",
     ):
         super().__init__()
         self.provider_name = provider_name
         self.model = model
         self.base_url = base_url
         self.session_manager = SessionManager(session_id=session_id)
+        self.requested_permission_mode = permission_mode
         self.agent: Agent = None
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+
+    async def request_tool_confirmation(
+        self, tool_name: str, args: dict[str, Any]
+    ) -> tuple[bool, bool]:
+        """Show interactive modal screen in TUI to request user tool approval."""
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future[tuple[bool, bool]] = loop.create_future()
+
+        def callback(result: tuple[bool, bool] | None):
+            if result is None:
+                result = (False, False)
+            if not fut.done():
+                fut.set_result(result)
+
+        self.push_screen(ToolConfirmationModal(tool_name, args), callback)
+        return await fut
 
     def on_mount(self) -> None:
         llm = get_provider(
             self.provider_name, default_model=self.model, base_url=self.base_url
         )
-        self.agent = Agent(llm=llm, session_manager=self.session_manager)
+        perm_mode = PermissionMode(self.requested_permission_mode)
+        perm_mgr = PermissionManager(
+            mode=perm_mode, confirmation_callback=self.request_tool_confirmation
+        )
+        self.agent = Agent(
+            llm=llm,
+            session_manager=self.session_manager,
+            permission_manager=perm_mgr,
+        )
         asyncio.create_task(
             self.agent.mcp_manager.connect_and_register_tools(self.agent.tools)
         )
@@ -175,7 +257,10 @@ class PiApp(App):
                         if m.content:
                             f.write(f"{m.content}\n\n")
                         if m.tool_calls:
-                            f.writelines(f"**Tool Call ({tc.name})**: `{tc.arguments}`\n\n" for tc in m.tool_calls)
+                            f.writelines(
+                                f"**Tool Call ({tc.name})**: `{tc.arguments}`\n\n"
+                                for tc in m.tool_calls
+                            )
                         if m.tool_result:
                             f.write(
                                 f"**Tool Result ({m.tool_result.name})**:\n```\n{m.tool_result.output}\n```\n\n"
@@ -214,11 +299,34 @@ class PiApp(App):
                     log.write(
                         "\n(Tip: Type [cyan]/skill <name>[/cyan] to view detailed instructions)\n"
                     )
+        elif cmd == "/permission":
+            if len(parts) > 1:
+                target_mode = parts[1].lower()
+                try:
+                    mode_enum = PermissionMode(target_mode)
+                    self.agent.permission_manager.set_mode(mode_enum)
+                    log.write(
+                        f"\n[bold green]🛡️  Permission mode updated to:[/bold green] [bold cyan]{mode_enum.value}[/bold cyan]\n"
+                    )
+                except ValueError:
+                    log.write(
+                        f"\n[bold red]Error:[/bold red] Invalid permission mode '{target_mode}'. Valid choices: yolo, ask, read_only\n"
+                    )
+            else:
+                curr_mode = self.agent.permission_manager.mode.value
+                auto_all = self.agent.permission_manager.session_approved_all
+                log.write(
+                    f"\n[bold green]🛡️  Current Permission Status:[/bold green]\n"
+                    f"Mode: [bold cyan]{curr_mode}[/bold cyan]\n"
+                    f"Session Auto-Approve: [cyan]{auto_all}[/cyan]\n"
+                    f"\nUse [cyan]/permission <yolo|ask|read_only>[/cyan] to change mode.\n"
+                )
         elif cmd == "/help":
             log.write(
                 "\n[bold green]💡 Available Slash Commands:[/bold green]\n"
                 "  • [cyan]/stats[/cyan]          - Display token usage & session telemetry\n"
                 "  • [cyan]/clear[/cyan]          - Clear the terminal chat log\n"
+                "  • [cyan]/permission [mode][/cyan] - Display or set permission mode (yolo, ask, read_only)\n"
                 "  • [cyan]/session[/cyan]        - Display current session ID & file path\n"
                 "  • [cyan]/tools[/cyan]          - List all available tools registered with Mu\n"
                 "  • [cyan]/skills[/cyan]         - List all discovered skills in .mu/skills/\n"
@@ -289,7 +397,8 @@ class PiApp(App):
                         f"Prompt: {self.total_prompt_tokens} | "
                         f"Completion: {self.total_completion_tokens} | "
                         f"Speed: {tok_per_sec:.1f} tok/s | "
-                        f"Latency: {u.latency_ms:.0f}ms"
+                        f"Latency: {u.latency_ms:.0f}ms | "
+                        f"Perms: [cyan]{self.agent.permission_manager.mode.value}[/cyan]"
                     )
                 elif event.type == "step_complete":
                     if assistant_buf:
@@ -334,16 +443,29 @@ def main():
     parser.add_argument(
         "--session",
         default=None,
-        help="Resume an existing session ID from .mu/sessions/ or .pi/sessions/",
+        help="Resume an existing session ID from .mu/sessions/",
+    )
+    parser.add_argument(
+        "--yolo",
+        action="store_true",
+        help="Run in autonomous YOLO mode (auto-approve tools except ultra-destructive operations)",
+    )
+    parser.add_argument(
+        "--permission-mode",
+        default="ask",
+        choices=["yolo", "ask", "read_only"],
+        help="Set tool execution permission mode (yolo, ask, read_only)",
     )
 
     args = parser.parse_args()
+    mode = "yolo" if args.yolo else args.permission_mode
 
     app = PiApp(
         provider_name=args.provider,
         model=args.model,
         base_url=args.base_url,
         session_id=args.session,
+        permission_mode=mode,
     )
     app.run()
 

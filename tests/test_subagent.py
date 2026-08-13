@@ -1,4 +1,3 @@
-
 import pytest
 
 from mu_agent.agent import Agent

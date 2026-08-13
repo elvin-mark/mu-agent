@@ -24,9 +24,7 @@ async def test_hook_registration_and_execution():
     manager.register("pre_tool_call", sample_pre_hook)
     manager.register("post_tool_call", sample_post_hook)
 
-    _name, args = await manager.trigger_pre_tool_call(
-        "run_command", {"command": "ls"}
-    )
+    _name, args = await manager.trigger_pre_tool_call("run_command", {"command": "ls"})
     assert pre_called is True
     assert args.get("modified") is True
 

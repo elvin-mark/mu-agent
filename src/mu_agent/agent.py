@@ -7,6 +7,7 @@ from .compaction import ContextCompactor
 from .hooks import HookManager
 from .llm import BaseLLMProvider
 from .mcp import MCPManager
+from .permissions import PermissionManager
 from .session import SessionManager, load_project_instructions
 from .skills import SkillManager
 from .subagent import SubagentManager, register_subagent_tools
@@ -35,6 +36,7 @@ class Agent:
         mcp_manager: MCPManager | None = None,
         hook_manager: HookManager | None = None,
         compactor: ContextCompactor | None = None,
+        permission_manager: PermissionManager | None = None,
         max_turns: int = 25,
         session_manager: SessionManager | None = None,
         max_history_tokens_estimate: int = 12000,
@@ -48,6 +50,18 @@ class Agent:
         self.compactor = compactor or ContextCompactor(
             target_max_tokens=max_history_tokens_estimate
         )
+        self.permission_manager = permission_manager or PermissionManager()
+
+        # Register permission hook
+        async def _perm_hook(tool_name: str, args: dict[str, Any]):
+            allowed, reason = await self.permission_manager.evaluate_and_confirm(
+                tool_name, args
+            )
+            if not allowed:
+                raise PermissionError(reason)
+            return tool_name, args
+
+        self.hook_manager.register("pre_tool_call", _perm_hook)
 
         self.subagent_manager = SubagentManager(parent_agent=self)
 
@@ -133,19 +147,29 @@ class Agent:
                 self.messages.append(asst_msg)
                 self.session_manager.save_message(asst_msg)
 
-                # Pre-tool lifecycle hook
-                tool_name, tool_args = await self.hook_manager.trigger_pre_tool_call(
-                    tc.name, tc.arguments
-                )
-
-                yield AgentEvent("tool_call_start", tc)
-                raw_output = await self.tools.execute(tool_name, tool_args)
-
-                # Post-tool lifecycle hook
-                tool_output = await self.hook_manager.trigger_post_tool_call(
-                    tool_name, raw_output
-                )
-                yield AgentEvent("tool_call_end", {"call": tc, "output": tool_output})
+                # Pre-tool lifecycle hook & permission check
+                try:
+                    (
+                        tool_name,
+                        tool_args,
+                    ) = await self.hook_manager.trigger_pre_tool_call(
+                        tc.name, tc.arguments
+                    )
+                    yield AgentEvent("tool_call_start", tc)
+                    raw_output = await self.tools.execute(tool_name, tool_args)
+                    tool_output = await self.hook_manager.trigger_post_tool_call(
+                        tool_name, raw_output
+                    )
+                except PermissionError as pe:
+                    tool_name = tc.name
+                    tool_output = str(pe)
+                    yield AgentEvent(
+                        "tool_call_end", {"call": tc, "output": tool_output}
+                    )
+                else:
+                    yield AgentEvent(
+                        "tool_call_end", {"call": tc, "output": tool_output}
+                    )
 
                 tool_res = ToolResult(
                     tool_call_id=tc.id,

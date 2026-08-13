@@ -119,10 +119,16 @@ def find_matching_index(
 
     for offset in range(window + 1):
         idx_f = target_idx + offset
-        if min_search <= idx_f <= max_search and file_lines[idx_f : idx_f + n_exp] == expected_lines:
+        if (
+            min_search <= idx_f <= max_search
+            and file_lines[idx_f : idx_f + n_exp] == expected_lines
+        ):
             return idx_f
         idx_b = target_idx - offset
-        if min_search <= idx_b <= max_search and file_lines[idx_b : idx_b + n_exp] == expected_lines:
+        if (
+            min_search <= idx_b <= max_search
+            and file_lines[idx_b : idx_b + n_exp] == expected_lines
+        ):
             return idx_b
 
     # Stage 3: Full file exact match search (for bare @@ or line drift > 15)

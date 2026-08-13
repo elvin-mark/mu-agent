@@ -1,8 +1,10 @@
 import asyncio
+import time
 from typing import Any, ClassVar
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.command import Hit, Hits, Provider
 from textual.containers import Container, Horizontal
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Static
@@ -19,6 +21,43 @@ except ImportError:
     from mu_agent.permissions import PermissionManager, PermissionMode
     from mu_agent.session import SessionManager
     from mu_agent.types import Role
+
+
+SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+
+class MuCommandProvider(Provider):
+    """Provides slash commands for the Textual Command Palette (Ctrl+P)."""
+
+    async def search(self, query: str) -> Hits:
+        matcher = self.matcher(query)
+
+        commands = [
+            ("/stats", "Display token usage & session telemetry"),
+            ("/clear", "Clear the terminal chat log"),
+            ("/permission yolo", "Switch to autonomous YOLO permission mode"),
+            ("/permission ask", "Switch to interactive ASK permission mode"),
+            ("/permission read_only", "Switch to safe READ_ONLY permission mode"),
+            ("/session", "Display current session ID & file path"),
+            ("/tools", "List all available tools registered with Mu"),
+            ("/skills", "List all discovered skills in .mu/skills/"),
+            ("/model", "View or switch active LLM model"),
+            ("/compact", "Manually trigger context compaction"),
+            ("/system", "View active system prompt & project rules"),
+            ("/export", "Export session transcript to Markdown file"),
+            ("/help", "Display available slash commands"),
+        ]
+
+        for cmd, desc in commands:
+            text = f"{cmd} - {desc}"
+            score = matcher.match(text)
+            if score > 0:
+                yield Hit(
+                    score,
+                    matcher.highlight(text),
+                    command=lambda c=cmd: self.app.execute_slash_command(c),
+                    text=text,
+                )
 
 
 class ToolConfirmationModal(ModalScreen[tuple[bool, bool]]):
@@ -144,10 +183,19 @@ class PiApp(App):
     }
     """
 
+    COMMANDS = App.COMMANDS | {MuCommandProvider}
+
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("ctrl+c", "quit", "Quit", show=True),
         Binding("ctrl+l", "clear", "Clear", show=True),
+        Binding("ctrl+p", "command_palette", "Palette", show=True),
     ]
+
+    def execute_slash_command(self, cmd_text: str):
+        """Execute slash command selected from Command Palette."""
+        log = self.query_one(RichLog)
+        log.write(f"\n[bold yellow]Palette>[/bold yellow] {cmd_text}")
+        asyncio.create_task(self.handle_slash_command(cmd_text, log))
 
     def __init__(
         self,
@@ -166,6 +214,50 @@ class PiApp(App):
         self.agent: Agent = None
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
+
+        self.is_thinking = False
+        self.thinking_status_text = "Thinking..."
+        self.thinking_start_time = 0.0
+        self.spinner_task: asyncio.Task | None = None
+
+    def start_spinner(self, initial_status: str = "Thinking..."):
+        self.stop_spinner()
+        self.is_thinking = True
+        self.thinking_status_text = initial_status
+        self.thinking_start_time = time.time()
+        self.spinner_task = asyncio.create_task(self._spinner_loop())
+
+    def set_spinner_status(self, status_text: str):
+        self.thinking_status_text = status_text
+
+    def stop_spinner(self):
+        self.is_thinking = False
+        if self.spinner_task and not self.spinner_task.done():
+            self.spinner_task.cancel()
+        self.spinner_task = None
+
+    async def _spinner_loop(self):
+        frame_idx = 0
+        try:
+            while self.is_thinking:
+                elapsed = time.time() - self.thinking_start_time
+                frame = SPINNER_FRAMES[frame_idx % len(SPINNER_FRAMES)]
+                frame_idx += 1
+                try:
+                    status_bar = self.query_one("#status-bar", Static)
+                    perm_str = (
+                        self.agent.permission_manager.mode.value
+                        if (self.agent and hasattr(self.agent, "permission_manager"))
+                        else self.requested_permission_mode
+                    )
+                    status_bar.update(
+                        f"[bold cyan]{frame} {self.thinking_status_text} ({elapsed:.1f}s)[/bold cyan] | Perms: [cyan]{perm_str}[/cyan]"
+                    )
+                except Exception:
+                    pass
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            pass
 
     async def request_tool_confirmation(
         self, tool_name: str, args: dict[str, Any]
@@ -413,14 +505,17 @@ class PiApp(App):
         log = self.query_one(RichLog)
         status_bar = self.query_one("#status-bar", Static)
         assistant_buf = ""
+        self.start_spinner("Thinking...")
 
         try:
             async for event in self.agent.step():
                 if event.type == "step_start":
+                    self.set_spinner_status("Processing turn & prompt...")
                     log.write("\n[bold blue]Mu>[/bold blue]", scroll_end=True)
                     assistant_buf = ""
 
                 elif event.type == "content_delta":
+                    self.set_spinner_status("Streaming LLM response...")
                     assistant_buf += event.payload
                     # Print completed words/lines in real-time while keeping formatting clean
                     if "\n" in event.payload or len(assistant_buf.split()) > 1:
@@ -457,15 +552,19 @@ class PiApp(App):
                         log.write(assistant_buf, scroll_end=True)
                         assistant_buf = ""
                     tc = event.payload
+                    self.set_spinner_status(f"Executing tool '{tc.name}'...")
                     log.write(
                         f"[bold magenta]⚡ Executing Tool:[/bold magenta] [cyan]{tc.name}[/cyan] with args: [dim]{tc.arguments}[/dim]"
                     )
                 elif event.type == "tool_call_end":
+                    self.set_spinner_status("Processing tool result...")
                     out = event.payload["output"]
                     snippet = out[:300] + ("..." if len(out) > 300 else "")
                     log.write(f"[bold green]Result:[/bold green] [dim]{snippet}[/dim]")
         except Exception as err:
             log.write(f"\n[bold red]Error:[/bold red] {err!s}", scroll_end=True)
+        finally:
+            self.stop_spinner()
 
 
 def main():

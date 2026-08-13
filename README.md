@@ -32,8 +32,12 @@
 - **🔌 Model Context Protocol (MCP)**:
   - Connects to external MCP servers (STDIO) configured in `.mu/mcp.json`.
   - Dynamically registers external tools (e.g. SQLite, GitHub, Brave Search) into Mu's tool engine.
-- **🤖 Subagent Delegation (`spawn_subagent`)**:
-  - Allows Mu to spawn isolated background child subagents with custom prompts to parallelize research or complex sub-tasks.
+- **🤖 Subagent Swarm & Messaging (`spawn_subagent`, `send_subagent_message`, `get_subagent_status`)**:
+  - Allows Mu to spawn subagents and pass messages asynchronously between parent and peer subagents.
+- **🪝 Lifecycle Hook & Plugin System (`.mu/plugins/`)**:
+  - Auto-discovers Python scripts in `.mu/plugins/` with `@hook` decorators for `pre_tool_call`, `post_tool_call`, `on_turn_start`, `on_turn_end`, and `on_context_compact`.
+- **🧠 Multi-Tier Context Compaction**:
+  - Automated 2-tier context budget management: output truncation at 70% budget, followed by LLM-driven semantic summarization pass at 90% capacity.
 - **📑 Session Persistence & Resuming (`.mu/sessions/`)**:
   - All turns and tool outputs are saved as JSONL records in `.mu/sessions/`.
   - Resume any past session via `--session <session_id>`.

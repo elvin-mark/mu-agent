@@ -1,17 +1,17 @@
 """MCP (Model Context Protocol) Client Integration (.mu/mcp.json)."""
 
-import os
 import json
-import asyncio
-from typing import Dict, Any, List, Optional
+import os
+from typing import Any
+
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 
 class MCPManager:
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: str | None = None):
         self.config_path = config_path or os.path.abspath(".mu/mcp.json")
-        self.servers: Dict[str, Dict[str, Any]] = {}
+        self.servers: dict[str, dict[str, Any]] = {}
         self.load_config()
 
     def load_config(self):
@@ -50,7 +50,7 @@ class MCPManager:
                             mcp_tool_name = f"mcp_{name}_{tool.name}"
 
                             def create_handler(srv_name, t_name, cmd, a, e):
-                                async def handler(tool_args: Dict[str, Any]) -> str:
+                                async def handler(tool_args: dict[str, Any]) -> str:
                                     params = StdioServerParameters(
                                         command=cmd, args=a, env=e
                                     )

@@ -1,9 +1,9 @@
-"""Skill Discovery & Management System (.pi/skills/ and ~/.pi/skills/)."""
+"""Skill Discovery & Management System (.mu/skills/ and ~/.mu/skills/)."""
 
-import os
 import glob
+import os
 import re
-from typing import Dict, Any, List, Optional
+
 from pydantic import BaseModel
 
 
@@ -12,10 +12,10 @@ class Skill(BaseModel):
     description: str
     location: str  # Path to SKILL.md
     instructions: str
-    scripts: List[str] = []
+    scripts: list[str] = []
 
 
-def parse_skill_md(file_path: str) -> Optional[Skill]:
+def parse_skill_md(file_path: str) -> Skill | None:
     """Parse SKILL.md file with YAML-like frontmatter metadata."""
     if not os.path.exists(file_path):
         return None
@@ -64,7 +64,7 @@ def parse_skill_md(file_path: str) -> Optional[Skill]:
 
 
 class SkillManager:
-    def __init__(self, search_paths: Optional[List[str]] = None):
+    def __init__(self, search_paths: list[str] | None = None):
         if search_paths is None:
             search_paths = [
                 os.path.abspath(".mu/skills"),
@@ -73,7 +73,7 @@ class SkillManager:
                 os.path.expanduser("~/.pi/skills"),
             ]
         self.search_paths = search_paths
-        self.skills: Dict[str, Skill] = {}
+        self.skills: dict[str, Skill] = {}
         self.scan_skills()
 
     def scan_skills(self):

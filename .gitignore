@@ -8,3 +8,8 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Local session logs and agent state
+.mu/
+.pi/
+

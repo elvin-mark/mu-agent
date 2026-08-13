@@ -3,9 +3,13 @@
 from collections.abc import AsyncIterator
 from typing import Any
 
+from .compaction import ContextCompactor
+from .hooks import HookManager
 from .llm import BaseLLMProvider
+from .mcp import MCPManager
 from .session import SessionManager, load_project_instructions
 from .skills import SkillManager
+from .subagent import SubagentManager, register_subagent_tools
 from .tools import ToolRegistry, create_default_registry, register_skill_tools
 from .types import Message, Role, ToolCall, ToolResult
 
@@ -21,10 +25,6 @@ class AgentEvent:
         self.payload = payload
 
 
-from .mcp import MCPManager
-from .subagent import SubagentManager, register_subagent_tools
-
-
 class Agent:
     def __init__(
         self,
@@ -33,6 +33,8 @@ class Agent:
         tool_registry: ToolRegistry | None = None,
         skill_manager: SkillManager | None = None,
         mcp_manager: MCPManager | None = None,
+        hook_manager: HookManager | None = None,
+        compactor: ContextCompactor | None = None,
         max_turns: int = 25,
         session_manager: SessionManager | None = None,
         max_history_tokens_estimate: int = 12000,
@@ -40,9 +42,16 @@ class Agent:
         self.llm = llm
         self.skill_manager = skill_manager or SkillManager()
         self.mcp_manager = mcp_manager or MCPManager()
+        self.hook_manager = hook_manager or HookManager()
+        self.hook_manager.load_plugins()
+
+        self.compactor = compactor or ContextCompactor(
+            target_max_tokens=max_history_tokens_estimate
+        )
+
         self.subagent_manager = SubagentManager(parent_agent=self)
 
-        # Load AGENTS.md / .pi/SYSTEM.md project instructions
+        # Load AGENTS.md / .mu/SYSTEM.md project instructions
         proj_instructions = load_project_instructions()
         if proj_instructions:
             system_prompt = (
@@ -77,25 +86,15 @@ class Agent:
         self.messages.append(msg)
         self.session_manager.save_message(msg)
 
-    def compact_context(self):
+    async def compact_context(self):
         """Auto-compact context if history exceeds max estimated token threshold."""
-        # Simple estimate: 4 chars = ~1 token
-        total_chars = sum(len(m.content or "") for m in self.messages)
-        if total_chars < self.max_history_tokens_estimate * 4:
-            return
-
-        # Truncate old tool outputs to reduce token count while keeping recent turns intact
-        for msg in self.messages[:-6]:
-            if (
-                msg.role == Role.TOOL
-                and msg.tool_result
-                and len(msg.tool_result.output) > 500
-            ):
-                msg.tool_result.output = (
-                    msg.tool_result.output[:200]
-                    + "\n... [Output truncated for compact context] ...\n"
-                    + msg.tool_result.output[-200:]
-                )
+        self.messages, did_compact = await self.compactor.compact(
+            messages=self.messages,
+            llm=self.llm,
+            max_tokens=self.max_history_tokens_estimate,
+        )
+        if did_compact:
+            await self.hook_manager.trigger_event("on_context_compact", self.messages)
 
     async def step(self) -> AsyncIterator[AgentEvent]:
         turns = 0
@@ -104,7 +103,8 @@ class Agent:
             assistant_content = ""
             pending_tool_call: dict[str, Any] | None = None
 
-            self.compact_context()
+            await self.compact_context()
+            await self.hook_manager.trigger_event("on_turn_start", turns)
             yield AgentEvent("step_start", {"turn": turns})
 
             async for chunk in self.llm.stream_chat(
@@ -133,13 +133,23 @@ class Agent:
                 self.messages.append(asst_msg)
                 self.session_manager.save_message(asst_msg)
 
+                # Pre-tool lifecycle hook
+                tool_name, tool_args = await self.hook_manager.trigger_pre_tool_call(
+                    tc.name, tc.arguments
+                )
+
                 yield AgentEvent("tool_call_start", tc)
-                tool_output = await self.tools.execute(tc.name, tc.arguments)
+                raw_output = await self.tools.execute(tool_name, tool_args)
+
+                # Post-tool lifecycle hook
+                tool_output = await self.hook_manager.trigger_post_tool_call(
+                    tool_name, raw_output
+                )
                 yield AgentEvent("tool_call_end", {"call": tc, "output": tool_output})
 
                 tool_res = ToolResult(
                     tool_call_id=tc.id,
-                    name=tc.name,
+                    name=tool_name,
                     output=tool_output,
                 )
                 tool_msg = Message(
@@ -156,5 +166,6 @@ class Agent:
                     )
                     self.messages.append(asst_msg)
                     self.session_manager.save_message(asst_msg)
+                await self.hook_manager.trigger_event("on_turn_end", turns)
                 yield AgentEvent("step_complete")
                 break

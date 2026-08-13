@@ -6,7 +6,6 @@ from textual.binding import Binding
 from textual.containers import Container
 from textual.widgets import Footer, Header, Input, RichLog, Static
 
-
 try:
     from .agent import Agent
     from .llm import get_provider
@@ -176,10 +175,7 @@ class PiApp(App):
                         if m.content:
                             f.write(f"{m.content}\n\n")
                         if m.tool_calls:
-                            for tc in m.tool_calls:
-                                f.write(
-                                    f"**Tool Call ({tc.name})**: `{tc.arguments}`\n\n"
-                                )
+                            f.writelines(f"**Tool Call ({tc.name})**: `{tc.arguments}`\n\n" for tc in m.tool_calls)
                         if m.tool_result:
                             f.write(
                                 f"**Tool Result ({m.tool_result.name})**:\n```\n{m.tool_result.output}\n```\n\n"
@@ -208,7 +204,7 @@ class PiApp(App):
                 log.write("\n[bold magenta]✨ Discovered Skills:[/bold magenta]")
                 if not self.agent.skill_manager.skills:
                     log.write(
-                        "  [dim]No skills found in .pi/skills/ or ~/.pi/skills/[/dim]\n"
+                        "  [dim]No skills found in .mu/skills/ or ~/.mu/skills/[/dim]\n"
                     )
                 else:
                     for s in self.agent.skill_manager.skills.values():
@@ -224,8 +220,8 @@ class PiApp(App):
                 "  • [cyan]/stats[/cyan]          - Display token usage & session telemetry\n"
                 "  • [cyan]/clear[/cyan]          - Clear the terminal chat log\n"
                 "  • [cyan]/session[/cyan]        - Display current session ID & file path\n"
-                "  • [cyan]/tools[/cyan]          - List all available tools registered with Pi\n"
-                "  • [cyan]/skills[/cyan]         - List all discovered skills in .pi/skills/\n"
+                "  • [cyan]/tools[/cyan]          - List all available tools registered with Mu\n"
+                "  • [cyan]/skills[/cyan]         - List all discovered skills in .mu/skills/\n"
                 "  • [cyan]/skill [name][/cyan]   - Inspect instructions for a specific skill\n"
                 "  • [cyan]/model [name][/cyan]   - View or switch active LLM model\n"
                 "  • [cyan]/compact[/cyan]        - Manually trigger context compaction\n"

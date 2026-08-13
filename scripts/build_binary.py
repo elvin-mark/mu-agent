@@ -1,8 +1,8 @@
 """Build standalone binary executable using PyInstaller."""
 
 import os
-import sys
 import subprocess
+import sys
 
 
 def build():

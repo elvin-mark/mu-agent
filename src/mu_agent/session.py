@@ -1,4 +1,4 @@
-"""Session management, persistence (.pi/sessions), and project instructions (AGENTS.md)."""
+"""Session management, persistence (.mu/sessions), and project instructions (AGENTS.md)."""
 
 import json
 import os
@@ -8,7 +8,7 @@ from typing import Any
 
 from .types import Message
 
-MU_DIR = ".mu" if os.path.exists(".mu") else ".pi"
+MU_DIR = ".pi" if (os.path.exists(".pi") and not os.path.exists(".mu")) else ".mu"
 SESSIONS_DIR = os.path.join(MU_DIR, "sessions")
 
 

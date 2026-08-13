@@ -1,4 +1,3 @@
-import pytest
 from mu_agent.skills import SkillManager, parse_skill_md
 
 

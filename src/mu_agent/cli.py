@@ -10,6 +10,12 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Static
 
 try:
+    from textual.theme import Theme
+    HAS_THEME_SUPPORT = True
+except ImportError:
+    HAS_THEME_SUPPORT = False
+
+try:
     from .agent import Agent
     from .llm import get_provider
     from .permissions import PermissionManager, PermissionMode
@@ -25,9 +31,36 @@ except ImportError:
 
 SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
+THEME_CHOICES = [
+    "textual-dark",
+    "textual-light",
+    "nord",
+    "tokyo-night",
+    "dracula",
+    "monokai",
+    "cyberpunk",
+]
+
+if HAS_THEME_SUPPORT:
+    CYBERPUNK_THEME = Theme(
+        name="cyberpunk",
+        primary="#ff007f",
+        secondary="#00f0ff",
+        accent="#ffe600",
+        foreground="#e0e6ed",
+        background="#0d0f18",
+        surface="#161925",
+        panel="#1f2335",
+        success="#00ff9f",
+        warning="#ffe600",
+        error="#ff0055",
+    )
+else:
+    CYBERPUNK_THEME = None
+
 
 class MuCommandProvider(Provider):
-    """Provides slash commands for the Textual Command Palette (Ctrl+P)."""
+    """Provides slash commands, models, skills, and tools for the Command Palette (Ctrl+P)."""
 
     async def search(self, query: str) -> Hits:
         matcher = self.matcher(query)
@@ -39,14 +72,27 @@ class MuCommandProvider(Provider):
             ("/permission ask", "Switch to interactive ASK permission mode"),
             ("/permission read_only", "Switch to safe READ_ONLY permission mode"),
             ("/session", "Display current session ID & file path"),
-            ("/tools", "List all available tools registered with Mu"),
-            ("/skills", "List all discovered skills in .mu/skills/"),
-            ("/model", "View or switch active LLM model"),
+            ("/tools", "List all registered agent tools"),
+            ("/skills", "List all discovered project skills"),
             ("/compact", "Manually trigger context compaction"),
             ("/system", "View active system prompt & project rules"),
             ("/export", "Export session transcript to Markdown file"),
             ("/help", "Display available slash commands"),
+            # Quick model switching options
+            ("/model gpt-4o", "Switch model to OpenAI GPT-4o"),
+            ("/model gpt-4o-mini", "Switch model to OpenAI GPT-4o Mini"),
+            ("/model claude-3-5-sonnet-20241022", "Switch model to Anthropic Claude 3.5 Sonnet"),
+            ("/model qwen2.5-coder", "Switch model to Qwen 2.5 Coder"),
+            ("/model llama3.1", "Switch model to Llama 3.1"),
         ]
+
+        for theme_name in THEME_CHOICES:
+            commands.append((f"/theme {theme_name}", f"Switch UI theme to '{theme_name}'"))
+
+        # Dynamically add discovered skills if available
+        if hasattr(self.app, "agent") and self.app.agent and hasattr(self.app.agent, "skill_manager"):
+            for s_name, s_obj in self.app.agent.skill_manager.skills.items():
+                commands.append((f"/skill {s_name}", f"Inspect skill: {s_obj.description}"))
 
         for cmd, desc in commands:
             text = f"{cmd} - {desc}"
@@ -188,7 +234,6 @@ class PiApp(App):
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("ctrl+c", "quit", "Quit", show=True),
         Binding("ctrl+l", "clear", "Clear", show=True),
-        Binding("ctrl+p", "command_palette", "Palette", show=True),
     ]
 
     def execute_slash_command(self, cmd_text: str):
@@ -276,6 +321,11 @@ class PiApp(App):
         return await fut
 
     def on_mount(self) -> None:
+        if HAS_THEME_SUPPORT and CYBERPUNK_THEME:
+            try:
+                self.register_theme(CYBERPUNK_THEME)
+            except Exception:
+                pass
         llm = get_provider(
             self.provider_name, default_model=self.model, base_url=self.base_url
         )
@@ -460,11 +510,37 @@ class PiApp(App):
                     f"Session Auto-Approve: [cyan]{auto_all}[/cyan]\n"
                     f"\nUse [cyan]/permission <yolo|ask|read_only>[/cyan] to change mode.\n"
                 )
+        elif cmd == "/theme":
+            if len(parts) > 1:
+                target_theme = parts[1].lower()
+                if HAS_THEME_SUPPORT:
+                    try:
+                        self.theme = target_theme
+                        log.write(
+                            f"\n[bold green]🎨 Theme updated to:[/bold green] [bold cyan]{target_theme}[/bold cyan]\n"
+                        )
+                    except Exception as err:
+                        log.write(
+                            f"\n[bold red]Error switching theme:[/bold red] {err!s}\n"
+                        )
+                else:
+                    log.write(
+                        "\n[bold red]Error:[/bold red] Theme switching requires Textual theme support.\n"
+                    )
+            else:
+                curr_theme = getattr(self, "theme", "textual-dark")
+                choices_str = ", ".join(THEME_CHOICES)
+                log.write(
+                    f"\n[bold green]🎨 Current Theme:[/bold green] [bold cyan]{curr_theme}[/bold cyan]\n"
+                    f"Available themes: [dim]{choices_str}[/dim]\n"
+                    f"Use [cyan]/theme <name>[/cyan] to switch themes at runtime.\n"
+                )
         elif cmd == "/help":
             log.write(
                 "\n[bold green]💡 Available Slash Commands:[/bold green]\n"
                 "  • [cyan]/stats[/cyan]          - Display token usage & session telemetry\n"
                 "  • [cyan]/clear[/cyan]          - Clear the terminal chat log\n"
+                "  • [cyan]/theme [name][/cyan]    - View or switch UI color theme at runtime\n"
                 "  • [cyan]/permission [mode][/cyan] - Display or set permission mode (yolo, ask, read_only)\n"
                 "  • [cyan]/session[/cyan]        - Display current session ID & file path\n"
                 "  • [cyan]/tools[/cyan]          - List all available tools registered with Mu\n"

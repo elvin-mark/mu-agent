@@ -49,12 +49,8 @@ class SubagentManager:
         task_id = f"subagent_{str(uuid.uuid4())[:6]}"
 
         from .agent import Agent
-        from .llm import get_provider
 
-        sub_llm = get_provider(
-            self.parent_agent.llm.__class__.__name__.lower().replace("provider", ""),
-            default_model=getattr(self.parent_agent.llm, "default_model", "gpt-4o"),
-        )
+        sub_llm = self.parent_agent.llm
 
         sub_sys_prompt = system_override or (
             "You are a specialized subagent delegated by Mu Agent to complete a focused task.\n"

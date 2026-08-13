@@ -1,0 +1,39 @@
+[project]
+name = "mu-agent"
+version = "0.1.0"
+description = "Extensible AI coding agent in Python"
+readme = "README.md"
+authors = [
+    { name = "elvin-mark", email = "munoz.vega.em@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "anthropic>=0.121.0",
+    "ddgs>=9.14.4",
+    "google-genai>=2.18.0",
+    "httpx>=0.28.1",
+    "mcp>=2.0.0",
+    "openai>=3.0.0",
+    "prompt-toolkit>=3.0.53",
+    "pydantic>=2.13.4",
+    "pyinstaller>=6.22.0",
+    "rich>=15.0.0",
+    "textual>=8.2.8",
+    "tiktoken>=0.13.0",
+]
+
+[project.scripts]
+mu = "mu_agent.cli:main"
+mu-agent = "mu_agent.cli:main"
+
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.8.0",
+]

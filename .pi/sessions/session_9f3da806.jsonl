@@ -1,3 +1,0 @@
-{"role":"system","content":"You are Pi, an expert AI coding assistant.\nYou have access to tools for interacting with the filesystem, running shell commands, and searching the web.\nAlways think carefully, break down complex tasks, verify code edits, and keep your responses clear and helpful.\n","tool_calls":null,"tool_result":null}
-{"role":"user","content":"hello","tool_calls":null,"tool_result":null}
-{"role":"assistant","content":"Hello! How can I assist you today? Do you need help with a coding project, have questions about a specific programming topic, or perhaps require assistance with a task that involves interacting with the filesystem or running shell commands? I'm here to help!","tool_calls":null,"tool_result":null}

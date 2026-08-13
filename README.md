@@ -21,7 +21,8 @@
   - Local LLMs: Ollama (`--provider ollama`), LM Studio, vLLM, and any OpenAI-compatible base URL (`--base-url`).
 - **🛠️ Built-in Tool Suite**:
   - `view_file` & `edit_file`: Line-by-line inspection and writing.
-  - `replace_file_content`: Precise string replacements.
+  - `replace_file_content`: Precise string replacements with multi-stage fuzzy context matching.
+  - `apply_patch`: Resilient unified diff patch application across single/multiple files.
   - `list_dir`: Directory inspection.
   - `run_command`: Async terminal process execution.
   - `web_search`: Live search via DuckDuckGo (`ddgs`).

@@ -24,6 +24,7 @@ READ_ONLY_TOOLS = {
 WRITE_EXEC_TOOLS = {
     "edit_file",
     "replace_file_content",
+    "apply_patch",
     "run_command",
     "spawn_subagent",
     "send_subagent_message",

@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "elvin-mark", email = "munoz.vega.em@gmail.com" }
 ]
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = [
     "anthropic>=0.121.0",
     "ddgs>=9.14.4",

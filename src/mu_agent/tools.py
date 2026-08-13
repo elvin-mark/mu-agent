@@ -81,6 +81,9 @@ async def edit_file_handler(args: dict[str, Any]) -> str:
         return f"Error writing file: {e!s}"
 
 
+from .patching import apply_patch_string, fuzzy_replace_string
+
+
 async def replace_file_content_handler(args: dict[str, Any]) -> str:
     path = args.get("path")
     target = args.get("target_content")
@@ -90,14 +93,26 @@ async def replace_file_content_handler(args: dict[str, Any]) -> str:
     try:
         with open(path, encoding="utf-8") as f:
             content = f.read()
-        if target not in content:
-            return f"Error: Target content not found in file '{path}'"
-        new_content = content.replace(target, replacement, 1)
+
+        new_content, ok, mode = fuzzy_replace_string(content, target, replacement)
+        if not ok:
+            return f"Error: Target content not found in file '{path}' (fuzzy search failed)."
+
         with open(path, "w", encoding="utf-8") as f:
             f.write(new_content)
-        return f"Successfully updated content in '{path}'"
+        return f"Successfully updated content in '{path}' ({mode})"
     except Exception as e:
         return f"Error modifying file: {e!s}"
+
+
+async def apply_patch_handler(args: dict[str, Any]) -> str:
+    patch = args.get("patch")
+    if not patch:
+        return "Error: 'patch' parameter is required."
+    ok, msg = apply_patch_string(patch)
+    if not ok:
+        return f"❌ Patch failed: {msg}"
+    return f"=== Unified Patch Applied ===\n{msg}"
 
 
 async def list_dir_handler(args: dict[str, Any]) -> str:
@@ -232,6 +247,22 @@ def create_default_registry() -> ToolRegistry:
             "required": ["path", "target_content", "replacement_content"],
         },
         replace_file_content_handler,
+    )
+
+    registry.register(
+        "apply_patch",
+        "Apply a unified diff patch string across single or multiple files in the workspace.",
+        {
+            "type": "object",
+            "properties": {
+                "patch": {
+                    "type": "string",
+                    "description": "Unified diff patch text with ---/+++ headers and @@ hunks",
+                },
+            },
+            "required": ["patch"],
+        },
+        apply_patch_handler,
     )
 
     registry.register(

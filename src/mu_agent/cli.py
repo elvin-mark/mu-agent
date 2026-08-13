@@ -58,6 +58,48 @@ class ToolConfirmationModal(ModalScreen[tuple[bool, bool]]):
             self.dismiss((True, True))
 
 
+class HistoryInput(Input):
+    """An Input widget supporting Up/Down arrow navigation for command history."""
+
+    BINDINGS: ClassVar[list[Binding]] = [
+        Binding("up", "history_up", "Previous Command", show=False),
+        Binding("down", "history_down", "Next Command", show=False),
+    ]
+
+    def __init__(self, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        self.history: list[str] = []
+        self.history_index: int = -1
+        self.temp_input: str = ""
+
+    def add_to_history(self, text: str):
+        if text and (not self.history or self.history[-1] != text):
+            self.history.append(text)
+        self.history_index = len(self.history)
+
+    def action_history_up(self) -> None:
+        if not self.history:
+            return
+        if self.history_index == len(self.history):
+            self.temp_input = self.value
+        if self.history_index > 0:
+            self.history_index -= 1
+            self.value = self.history[self.history_index]
+            self.cursor_position = len(self.value)
+
+    def action_history_down(self) -> None:
+        if not self.history:
+            return
+        if self.history_index < len(self.history) - 1:
+            self.history_index += 1
+            self.value = self.history[self.history_index]
+            self.cursor_position = len(self.value)
+        elif self.history_index == len(self.history) - 1:
+            self.history_index = len(self.history)
+            self.value = self.temp_input
+            self.cursor_position = len(self.value)
+
+
 class PiApp(App):
     CSS = """
     Screen {
@@ -177,9 +219,12 @@ class PiApp(App):
         # Display existing history if resuming
         if len(self.agent.messages) > 1:
             log.write("[dim]--- Resumed Session History ---[/dim]")
+            input_widget = self.query_one(HistoryInput)
             for msg in self.agent.messages[1:]:
                 if msg.role == Role.USER:
                     log.write(f"\n[bold yellow]User>[/bold yellow] {msg.content}")
+                    if msg.content:
+                        input_widget.add_to_history(msg.content)
                 elif msg.role == Role.ASSISTANT and msg.content:
                     log.write(f"\n[bold blue]Mu>[/bold blue]\n{msg.content}")
             log.write("[dim]--------------------------------[/dim]\n")
@@ -189,7 +234,9 @@ class PiApp(App):
         yield RichLog(id="chat-log", highlight=True, markup=True, wrap=True)
         yield Static("Tokens: 0 | Prompt: 0 | Completion: 0", id="status-bar")
         with Container(id="input-container"):
-            yield Input(placeholder="Ask Mu anything... (Type /help for commands)")
+            yield HistoryInput(
+                placeholder="Ask Mu anything... (Type /help for commands)"
+            )
         yield Footer()
 
     async def handle_slash_command(self, cmd_text: str, log: RichLog):
@@ -349,7 +396,8 @@ class PiApp(App):
         if not user_text:
             return
 
-        input_widget = self.query_one(Input)
+        input_widget = self.query_one(HistoryInput)
+        input_widget.add_to_history(user_text)
         input_widget.value = ""
         log = self.query_one(RichLog)
 

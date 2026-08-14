@@ -1,78 +1,104 @@
 """Session management, persistence (.mu/sessions), and project instructions (AGENTS.md)."""
 
 import json
+import logging
 import os
-import time
 import uuid
 from typing import Any
 
 from .types import Message
 
-MU_DIR = ".pi" if (os.path.exists(".pi") and not os.path.exists(".mu")) else ".mu"
-SESSIONS_DIR = os.path.join(MU_DIR, "sessions")
+logger = logging.getLogger(__name__)
+
+
+def _resolve_mu_dir(root: str = ".") -> str:
+    """Resolve config dir: prefer .mu, fall back to .pi for backward compatibility."""
+    mu = os.path.join(root, ".mu")
+    pi = os.path.join(root, ".pi")
+    if os.path.exists(mu):
+        return ".mu"
+    if os.path.exists(pi):
+        return ".pi"
+    return ".mu"  # default for new projects
 
 
 class SessionManager:
-    def __init__(self, session_id: str | None = None, sessions_dir: str | None = None):
-
+    def __init__(
+        self,
+        session_id: str | None = None,
+        sessions_dir: str | None = None,
+        root_dir: str = ".",
+    ):
+        self.root_dir = root_dir
+        self.mu_dir = _resolve_mu_dir(root_dir)
+        default_sessions_dir = os.path.join(root_dir, self.mu_dir, "sessions")
         self.session_id = session_id or str(uuid.uuid4())[:8]
-        self.sessions_dir = sessions_dir or SESSIONS_DIR
+        self.sessions_dir = sessions_dir or default_sessions_dir
         os.makedirs(self.sessions_dir, exist_ok=True)
         self.session_file = os.path.join(
             self.sessions_dir, f"session_{self.session_id}.jsonl"
         )
 
-    def save_message(self, message: Message):
-        with open(self.session_file, "a", encoding="utf-8") as f:
-            f.write(message.model_dump_json() + "\n")
+    def save_message(self, message: Message) -> None:
+        try:
+            with open(self.session_file, "a", encoding="utf-8") as f:
+                f.write(message.model_dump_json() + "\n")
+        except OSError as e:
+            logger.warning("Failed to persist message to session: %s", e)
 
     def load_session(self) -> list[Message]:
         if not os.path.exists(self.session_file):
             return []
-        messages = []
+        messages: list[Message] = []
         with open(self.session_file, encoding="utf-8") as f:
-            for line in f:
-                if line.strip():
+            for lineno, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
                     data = json.loads(line)
                     messages.append(Message.model_validate(data))
+                except (json.JSONDecodeError, ValueError) as e:
+                    logger.warning(
+                        "Skipping corrupt session line %d in %s: %s",
+                        lineno,
+                        self.session_file,
+                        e,
+                    )
         return messages
 
-    @staticmethod
-    def list_sessions() -> list[dict[str, Any]]:
-        if not os.path.exists(SESSIONS_DIR):
+    def list_sessions(self) -> list[dict[str, Any]]:
+        if not os.path.exists(self.sessions_dir):
             return []
-        sessions = []
-        for file in os.listdir(SESSIONS_DIR):
+        sessions: list[dict[str, Any]] = []
+        for file in os.listdir(self.sessions_dir):
             if file.startswith("session_") and file.endswith(".jsonl"):
-                path = os.path.join(SESSIONS_DIR, file)
-                sid = file.replace("session_", "").replace(".jsonl", "")
-                mtime = os.path.getmtime(path)
+                path = os.path.join(self.sessions_dir, file)
+                sid = file.removeprefix("session_").removesuffix(".jsonl")
+                mtime = os.path.getmtime(path)  # numeric float — sort correctly
+                size = os.path.getsize(path)
                 sessions.append(
-                    {"session_id": sid, "path": path, "mtime": time.ctime(mtime)}
+                    {"session_id": sid, "path": path, "mtime": mtime, "size_bytes": size}
                 )
+        # Sort by numeric mtime descending (most recent first) — not ctime string!
         return sorted(sessions, key=lambda x: x["mtime"], reverse=True)
 
 
 def load_project_instructions(root_dir: str = ".") -> str:
-    """Load project custom instructions from AGENTS.md or .pi/SYSTEM.md if available."""
-    instructions = []
+    """Load project custom instructions from AGENTS.md or .mu/SYSTEM.md if available."""
+    mu_dir = _resolve_mu_dir(root_dir)
+    instructions: list[str] = []
 
-    agents_md = os.path.join(root_dir, "AGENTS.md")
-    if os.path.exists(agents_md):
-        try:
-            with open(agents_md, encoding="utf-8") as f:
-                instructions.append(f"--- Instructions from AGENTS.md ---\n{f.read()}")
-        except Exception:
-            pass
-
-    mu_system = os.path.join(root_dir, MU_DIR, "SYSTEM.md")
-    if os.path.exists(mu_system):
-        try:
-            with open(mu_system, encoding="utf-8") as f:
-                instructions.append(
-                    f"--- Instructions from {MU_DIR}/SYSTEM.md ---\n{f.read()}"
-                )
-        except Exception:
-            pass
+    for candidates in [
+        (os.path.join(root_dir, "AGENTS.md"), "AGENTS.md"),
+        (os.path.join(root_dir, mu_dir, "SYSTEM.md"), f"{mu_dir}/SYSTEM.md"),
+    ]:
+        path, label = candidates
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as f:
+                    instructions.append(f"--- Instructions from {label} ---\n{f.read()}")
+            except OSError as e:
+                logger.warning("Could not read project instructions from %s: %s", path, e)
 
     return "\n\n".join(instructions)

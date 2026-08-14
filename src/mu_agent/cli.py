@@ -256,7 +256,9 @@ class PiApp(App):
         self.base_url = base_url
         self.session_manager = SessionManager(session_id=session_id)
         self.requested_permission_mode = permission_mode
-        self.agent: Agent = None
+        self.agent: Agent | None = None
+        self._agent_running: bool = False  # Re-entrancy guard
+
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
 
@@ -426,21 +428,25 @@ class PiApp(App):
                 )
         elif cmd == "/compact":
             old_len = len(self.agent.messages)
-            self.agent.compact_context()
+            await self.agent.compact_context()
+            new_len = len(self.agent.messages)
             log.write(
-                "\n[bold green]🧹 Context Compaction Triggered:[/bold green] Truncated old tool logs to optimize token limits.\n"
+                f"\n[bold green]🧹 Context Compaction Triggered:[/bold green] "
+                f"Context reduced from {old_len} → {new_len} messages.\n"
             )
+
         elif cmd == "/system":
             log.write(
                 f"\n[bold blue]⚙️ Active System Prompt:[/bold blue]\n[dim]{self.agent.system_prompt}[/dim]\n"
             )
         elif cmd == "/export":
-            export_filename = f"pi_session_{self.session_manager.session_id}.md"
+            export_filename = f"mu_session_{self.session_manager.session_id}.md"
             try:
                 with open(export_filename, "w", encoding="utf-8") as f:
                     f.write(
-                        f"# Pi Session Export - {self.session_manager.session_id}\n\n"
+                        f"# Mu Session Export - {self.session_manager.session_id}\n\n"
                     )
+
                     for m in self.agent.messages:
                         f.write(f"### Role: {m.role.value}\n")
                         if m.content:
@@ -575,12 +581,19 @@ class PiApp(App):
 
         log.write(f"\n[bold yellow]User>[/bold yellow] {user_text}")
         self.agent.add_user_message(user_text)
+        if self._agent_running:
+            log.write(
+                "\n[dim yellow]⚠ Agent is still running. Please wait before sending another message.[/dim yellow]\n"
+            )
+            return
         asyncio.create_task(self.run_agent_steps())
+
 
     async def run_agent_steps(self):
         log = self.query_one(RichLog)
         status_bar = self.query_one("#status-bar", Static)
         assistant_buf = ""
+        self._agent_running = True
         self.start_spinner("Thinking...")
 
         try:
@@ -640,7 +653,10 @@ class PiApp(App):
         except Exception as err:
             log.write(f"\n[bold red]Error:[/bold red] {err!s}", scroll_end=True)
         finally:
+            self._agent_running = False
             self.stop_spinner()
+
+
 
 
 def main():

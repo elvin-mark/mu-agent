@@ -49,14 +49,16 @@ async def view_file_handler(args: dict[str, Any]) -> str:
     if not path or not os.path.exists(path):
         return f"Error: File not found at path '{path}'"
     try:
-        start_line = args.get("start_line", 1)
+        start_line = max(1, args.get("start_line", 1))
         end_line = args.get("end_line", 500)
-        with open(path, encoding="utf-8", errors="replace") as f:
-            lines = f.readlines()
 
+        def _read() -> list[str]:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                return f.readlines()
+
+        lines = await asyncio.to_thread(_read)
         total_lines = len(lines)
         selected_lines = lines[start_line - 1 : end_line]
-
         output = [
             f"--- File: {path} (Lines {start_line}-{min(end_line, total_lines)} of {total_lines}) ---"
         ]
@@ -67,18 +69,25 @@ async def view_file_handler(args: dict[str, Any]) -> str:
         return f"Error reading file: {e!s}"
 
 
+
 async def edit_file_handler(args: dict[str, Any]) -> str:
     path = args.get("path")
     content = args.get("content", "")
     if not path:
         return "Error: Path is required"
     try:
-        os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(content)
+        abs_path = os.path.abspath(path)
+        os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+
+        def _write() -> None:
+            with open(abs_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+        await asyncio.to_thread(_write)
         return f"Successfully written to '{path}'"
     except Exception as e:
         return f"Error writing file: {e!s}"
+
 
 
 from .patching import apply_patch_string, fuzzy_replace_string
@@ -135,15 +144,31 @@ async def list_dir_handler(args: dict[str, Any]) -> str:
 async def run_command_handler(args: dict[str, Any]) -> str:
     command = args.get("command")
     cwd = args.get("cwd", ".")
+    timeout = args.get("timeout", 120)  # default 120 seconds
     if not command:
         return "Error: Command is required"
     try:
         process = await asyncio.create_subprocess_shell(
             command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
-        stdout, stderr = await process.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=float(timeout)
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            await process.communicate()
+            return f"Error: Command timed out after {timeout}s. Process killed.\n$ {command}"
+
         out_str = stdout.decode("utf-8", errors="replace")
         err_str = stderr.decode("utf-8", errors="replace")
+
+        # Cap output to prevent context overflow
+        max_output = 8000
+        if len(out_str) > max_output:
+            out_str = out_str[:max_output] + f"\n... [Output truncated at {max_output} chars] ..."
+        if len(err_str) > max_output:
+            err_str = err_str[:max_output] + f"\n... [Stderr truncated at {max_output} chars] ..."
 
         res = f"Exit code: {process.returncode}\n"
         if out_str:
@@ -153,6 +178,7 @@ async def run_command_handler(args: dict[str, Any]) -> str:
         return res
     except Exception as e:
         return f"Error running command: {e!s}"
+
 
 
 async def read_url_handler(args: dict[str, Any]) -> str:
@@ -175,8 +201,12 @@ async def web_search_handler(args: dict[str, Any]) -> str:
     try:
         from ddgs import DDGS
 
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
+        def _search() -> list[dict[str, Any]]:
+            with DDGS() as ddgs:
+                return list(ddgs.text(query, max_results=max_results))
+
+        results = await asyncio.to_thread(_search)
+
         if not results:
             return f"No results found for query: '{query}'"
 
